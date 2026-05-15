@@ -18,14 +18,19 @@ from app.services.sarvam.tts_service import SarvamTTSService
 from app.services.conversation.memory_manager import MemoryManager
 from app.services.conversation.intent_detector import IntentDetector
 from app.services.conversation.prompt_builder import PromptBuilder
-
+from app.services.conversation.persistence_service import (
+    PersistenceService
+)
 
 class ConversationOrchestrator:
     """
     Central orchestration engine for AI conversations.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        persistence_service: PersistenceService
+    ):
         """
         Initialize conversation services.
         """
@@ -35,6 +40,10 @@ class ConversationOrchestrator:
         self.tts_service = SarvamTTSService()
 
         self.memory_manager = MemoryManager()
+
+        self.persistence_service = (
+        persistence_service
+        )
 
     async def process_user_message(
         self,
@@ -50,6 +59,11 @@ class ConversationOrchestrator:
             self.memory_manager.get_conversation_history(
                 conversation_id
             )
+        )
+        self.persistence_service.store_message(
+            conversation_id=conversation_id,
+            sender="user",
+            message_text=user_message
         )
 
         messages = PromptBuilder.build_messages(
@@ -70,6 +84,11 @@ class ConversationOrchestrator:
             role="user",
             content=user_message
         )
+        self.persistence_service.store_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            message_text=assistant_response
+        )
 
         if "</think>" in assistant_response:
 
@@ -88,17 +107,26 @@ class ConversationOrchestrator:
         detected_intent = IntentDetector.detect_intent(
             user_message=user_message
         )
+        if detected_intent:
+            self.persistence_service.update_intent(
+                conversation_id=conversation_id,
+                intent=detected_intent
+            )
 
         output_audio_file = (
+            f"storage/output_audio/"
             f"response_{uuid.uuid4()}.wav"
         )
-
         await self.tts_service.generate_speech(
             text=assistant_response,
             language_code=language_code,
             output_file=output_audio_file
         )
-
+        self.persistence_service.store_log(
+            conversation_id=conversation_id,
+            event_type="conversation_response",
+            log_message=assistant_response
+        )
         return {
             "assistant_response": assistant_response,
             "intent": detected_intent,

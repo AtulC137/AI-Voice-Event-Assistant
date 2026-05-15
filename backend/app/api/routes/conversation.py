@@ -15,6 +15,8 @@ from fastapi import APIRouter
 from fastapi import WebSocket
 from fastapi import WebSocketDisconnect
 
+from app.db.session import SessionLocal
+
 from app.services.sarvam.stt_service import (
     SarvamSTTService
 )
@@ -23,15 +25,19 @@ from app.services.conversation.orchestrator import (
     ConversationOrchestrator
 )
 
+from app.services.conversation.persistence_service import (
+    PersistenceService
+)
+
+from app.repositories.conversation_repository import (
+    ConversationRepository
+)
+
 
 router = APIRouter()
 
 
 stt_service = SarvamSTTService()
-
-conversation_orchestrator = (
-    ConversationOrchestrator()
-)
 
 
 @router.websocket("/ws/conversation")
@@ -49,7 +55,27 @@ async def conversation_websocket(
         flush=True
     )
 
-    conversation_id = str(uuid.uuid4())
+    db = SessionLocal()
+
+    persistence_service = (
+        PersistenceService(db=db)
+    )
+
+    conversation = (
+        ConversationRepository
+        .create_conversation(
+            db=db,
+            user_id=None
+        )
+    )
+
+    conversation_id = str(conversation.id)
+
+    conversation_orchestrator = (
+        ConversationOrchestrator(
+            persistence_service=persistence_service
+        )
+    )
 
     try:
 
@@ -60,7 +86,7 @@ async def conversation_websocket(
             )
 
             input_audio_path = (
-                f"tests/audio_samples/"
+                f"storage/input_audio/"
                 f"{uuid.uuid4()}.wav"
             )
 
@@ -141,3 +167,7 @@ async def conversation_websocket(
             f"WebSocket Error: {error}",
             flush=True
         )
+
+    finally:
+
+        db.close()

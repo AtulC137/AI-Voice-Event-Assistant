@@ -35,7 +35,7 @@ class Conversation(Base):
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id"),
-        nullable=False
+        nullable=True
     )
 
     status = Column(
