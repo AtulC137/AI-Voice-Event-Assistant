@@ -16,3 +16,5 @@ output.wav
 
 .idea/
 .vscode/
+
+tests/generated_audio/

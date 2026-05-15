@@ -15,7 +15,7 @@ async def main():
     stt_service = SarvamSTTService()
 
     response = await stt_service.transcribe_audio(
-        file_path="sample_audio.wav"
+        file_path="tests/audio_samples/sample_audio.wav"
     )
 
     print("\nSTT RESPONSE:\n")

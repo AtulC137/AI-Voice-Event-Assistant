@@ -1,0 +1,40 @@
+Phase 3 — Conversation Engine
+
+Goal:
+Build the central conversational brain of the assistant.
+
+This phase connects:
+
+STT → LLM → TTS
+
+with:
+
+conversation memory
+intent detection
+transcript handling
+DB logging
+multilingual conversation behavior
+
+1) TESTING 
+
+PS D:\Projects\ai-voice-event-assistant> docker compose exec backend python test_orchestrator.py
+
+        ORCHESTRATOR RESPONSE:
+
+        Assistant Response: Event 8 May 2026 ko subah 10:00 baje se shuru hoga aur The Pride Hotel, Shivajinagar, Pune mein hoga.
+
+        Detected Intent: None
+
+Generated Audio File: response_d4314f2a-6bb7-420a-a253-aa979609b54d.wav
+
+IMPORTANT
+
+Now run tests from inside backend container using:
+
+         >>> docker compose exec backend python tests/test_stt.py
+
+Same pattern for all tests:
+
+tests/test_llm.py
+tests/test_tts.py
+tests/test_orchestrator.py

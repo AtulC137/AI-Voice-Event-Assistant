@@ -22,6 +22,7 @@ class SarvamTTSService:
     async def generate_speech(
     self,
     text: str,
+    language_code: str = "language_code",
     output_file: str = "output.wav"
 ):
         """
