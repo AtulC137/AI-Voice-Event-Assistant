@@ -1,0 +1,102 @@
+
+1) run this command >> docker compose exec backend alembic init alembic
+this will create : 
+    backend/
+    │
+    ├── alembic/
+    │   ├── versions/
+    │   ├── env.py
+    │   ├── script.py.mako
+    │   └── README
+    │
+    └── alembic.ini
+
+Alembic is a database migration tool for SQLAlchemy.
+
+It:
+
+    tracks DB schema changes
+    creates migration files
+    updates PostgreSQL safely
+
+Why we use it:
+    Because later when tables/models change, Alembic updates DB properly instead of manually editing PostgreSQL.
+
+2) Open File
+backend/alembic.ini
+
+Find this line:
+
+sqlalchemy.url = driver://user:pass@localhost/dbname
+
+Replace with:
+
+sqlalchemy.url = postgresql://postgres:postgres@db:5432/voice_assistant_db
+
+3) craete models in models folder:
+    create files like converstaion.py, intraction.py, messages.py, transcript.py, user.properly
+    run >> docker compose exec backend alembic revision --autogenerate -m "initial_tables"
+    to run migrations automatically
+
+4) Apply Migration to PostgreSQL
+
+Run:
+    >> docker compose exec backend alembic upgrade head
+
+5) Vraify that tables are craeted :
+
+PS D:\Projects\ai-voice-event-assistant> docker compose exec db psql -U postgres -d voice_assistant_db
+psql (16.13 (Debian 16.13-1.pgdg13+1))
+Type "help" for help.
+
+voice_assistant_db=# \dt
+              List of relations
+ Schema |       Name       | Type  |  Owner
+--------+------------------+-------+----------
+ public | alembic_version  | table | postgres
+ public | conversations    | table | postgres
+ public | interaction_logs | table | postgres
+ public | messages         | table | postgres
+ public | transcripts      | table | postgres
+ public | users            | table | postgres
+(6 rows)
+
+voice_assistant_db=# \q
+
+
+
+MODELS :
+Very Short Understanding of Current DB Models
+User
+
+Represents caller/user.
+
+Conversation
+
+One complete voice session.
+
+Stores:
+
+final intent
+duration
+status
+Message
+
+Stores individual conversation messages.
+
+Examples:
+
+user speech text
+AI responses
+Transcript
+
+Stores full conversation transcript.
+
+InteractionLog
+
+Stores:
+
+errors
+latency logs
+system events
+debugging info

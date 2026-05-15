@@ -1,0 +1,13 @@
+main.py >> Starts FastAPI app.
+
+config.py >> Loads environment/config settings.
+
+database.py >> Handles PostgreSQL connection/session setup.
+
+health.py >> Simple API route for testing backend health.
+
+Dockerfile >> Defines backend container.
+
+docker-compose.yml >> Runs multi-container system:
+                                            backend
+                                            postgres

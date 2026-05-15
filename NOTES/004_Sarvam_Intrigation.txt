@@ -1,0 +1,58 @@
+*** Phase 2 — SARVAM AI Integration ***
+
+Goal:
+Build and verify REAL SARVAM AI services.
+At the end of this phase:
+
+    audio → text works
+    text → AI response works
+    text → speech works
+
+No websocket yet.
+No streaming yet.
+
+We first verify:
+SARVAM APIs are stable
+
+1) Create folder:
+
+backend/app/services/sarvam/
+
+Inside create:
+
+    __init__.py
+    client.py
+    stt_service.py
+    llm_service.py
+    tts_service.py
+
+    Purpose of Each File:
+    client.py : 
+        Reusable async HTTP client.
+        Avoids duplicated request code.
+    stt_service.py:
+        Speech-to-text logic.
+    llm_service.py:
+        LLM response generation.
+    tts_service.py:
+        Text-to-speech generation.
+
+example:
+
+        give audio file → STT returns text
+        give text → LLM returns response
+        give text → TTS returns audio
+
+Then we combine them.
+
+We are just not doing:
+
+        websocket streaming
+        live microphone streaming
+        interruption handling
+
+2) TESTING :
+
+    >> docker compose exec backend python test_tts.py
+    >> docker compose exec backend python test_llm.py
+    >> docker compose exec backend python test_stt.py

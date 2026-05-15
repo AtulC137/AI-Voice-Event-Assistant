@@ -1,0 +1,109 @@
+1) craete this folder structure :
+
+mkdir backend
+mkdir frontend
+mkdir docs
+
+mkdir backend\app
+mkdir backend\app\api
+mkdir backend\app\api\routes
+mkdir backend\app\core
+mkdir backend\app\models
+mkdir backend\app\services
+mkdir backend\app\utils
+
+New-Item backend\app\__init__.py -ItemType File
+New-Item backend\app\main.py -ItemType File
+
+New-Item backend\requirements.txt -ItemType File
+New-Item backend\Dockerfile -ItemType File
+New-Item backend\.env -ItemType File
+
+New-Item docker-compose.yml -ItemType File
+New-Item .gitignore -ItemType File
+New-Item README.md -ItemType File
+
+
+2) Add Backend Dependencies
+
+Open:
+
+backend/requirements.txt
+
+Add this:
+
+fastapi
+uvicorn[standard]
+
+sqlalchemy
+psycopg2-binary
+alembic
+
+python-dotenv
+pydantic-settings
+
+websockets
+httpx
+
+3) setup .env in backend
+
+        POSTGRES_USER=postgres
+        POSTGRES_PASSWORD=postgres
+        POSTGRES_DB=voice_assistant_db
+
+        DATABASE_URL=postgresql://postgres:postgres@db:5432/voice_assistant_db
+Why db in DATABASE_URL?
+
+Because inside Docker Compose:
+PostgreSQL container service name will be db
+Docker networking automatically resolves it
+
+So backend connects to: db:5432
+
+4) Create Dockerfile
+What This Does
+    - FROM python:3.11-slim
+    - Lightweight Python image
+
+WORKDIR /app
+    -Sets container working directory
+
+COPY requirements.txt .
+    -Copies dependency file first
+
+Important for Docker caching.
+    -RUN pip install ...
+    -Installs dependencies
+
+COPY . .
+
+Copies backend code into container
+
+CMD ...
+
+Starts FastAPI server
+
+0.0.0.0 is VERY important.
+Otherwise container won’t be accessible outside.
+
+5) Create Docker Compose
+What This Does
+    backend service
+    Runs FastAPI container.
+    build: ./backend
+    Uses backend Dockerfile
+    env_file
+
+    Loads .env into container.
+    depends_on
+    Backend waits for DB container startup.
+    db service
+    Creates PostgreSQL container.
+    postgres_data volume
+    Persistent DB storage.
+    DB survives container restart.
+
+5) Create a Fast API app
+in main write fast api code. 
+
+6) run the container using >>  docker compose up --build
