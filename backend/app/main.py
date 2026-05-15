@@ -7,6 +7,9 @@ Handles:
 """
 
 from fastapi import FastAPI
+from app.api.routes.conversation import (
+    router as conversation_router
+)
 
 from app.api.routes.health import router as health_router
 
@@ -18,3 +21,4 @@ app = FastAPI(
 
 
 app.include_router(health_router)
+app.include_router(conversation_router)

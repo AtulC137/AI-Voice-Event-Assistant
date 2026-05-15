@@ -1,0 +1,44 @@
+'''
+
+IMPORTANT
+Initially:
+push-to-talk architecture
+
+NOT continuous streaming.
+
+Why?
+Because:
+
+    simpler debugging
+    stable architecture
+    easier latency optimization later
+
+Then we upgrade to streaming.
+
+'''
+
+1) What We Will Build In This Phase
+
+Frontend:
+
+    microphone capture
+    send audio to backend
+    receive AI audio
+    play AI voice
+
+Backend:
+
+    WebSocket endpoint
+    audio processing pipeline
+    conversation orchestration
+    response audio return
+
+2) First Working Version Flow
+    User speaks
+        → frontend records short audio
+        → backend websocket
+        → STT
+        → Conversation Engine
+        → TTS
+        → frontend receives audio
+        → AI voice playback
