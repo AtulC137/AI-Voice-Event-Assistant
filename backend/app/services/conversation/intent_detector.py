@@ -24,6 +24,21 @@ class IntentDetector:
         "haan interested hoon",
         "mujhe attend karna hai"
     ]
+    END_CONVERSATION_KEYWORDS = [
+        "bye",
+        "goodbye",
+        "thank you",
+        "thanks",
+        "see you",
+        "end call",
+        "stop conversation",
+        "talk later",
+        "bye bye",
+        "dhanyawad",
+        "shukriya",
+        "alvida",
+        "theek hai bye"
+    ]
 
     MAYBE_KEYWORDS = [
         "maybe",
@@ -69,5 +84,11 @@ class IntentDetector:
 
             if keyword in message:
                 return "Not Interested"
+        for keyword in (
+            IntentDetector
+            .END_CONVERSATION_KEYWORDS
+        ):
+            if keyword in message:
+                return "End Conversation"
 
         return None

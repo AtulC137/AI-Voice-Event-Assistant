@@ -108,10 +108,17 @@ async def conversation_websocket(
                     file_path=input_audio_path
                 )
             )
-
             user_text = (
                 stt_response["transcript"]
             )
+
+            if not user_text.strip():
+                print(
+                    "Empty transcription ignored.",
+                    flush=True
+                )
+
+                continue
 
             language_code = (
                 stt_response["language_code"]
@@ -148,6 +155,16 @@ async def conversation_websocket(
             await websocket.send_bytes(
                 response_audio_bytes
             )
+            if (
+                orchestrator_response[
+                    "end_conversation"
+                ]
+            ):
+                await websocket.send_text(
+                    "__END_AFTER_AUDIO__"
+                )
+
+                break
 
             print(
                 "AI response audio sent.",

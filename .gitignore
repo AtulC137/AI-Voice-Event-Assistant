@@ -21,3 +21,15 @@ tests/generated_audio/
 
 storage/input_audio/
 storage/output_audio/
+storage/output_audio
+storage/input_audio
+
+backend/storage/input_audio/
+backend/storage/output_audio/
+
+tests/generated_audio/
+
+backend/storage/input_audio/
+backend/storage/output_audio/
+
+*.wav

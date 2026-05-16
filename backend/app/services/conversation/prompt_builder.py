@@ -6,6 +6,9 @@ Responsible for:
 - maintaining multilingual behavior
 - injecting conversation memory
 - enforcing response style
+- Prioritize fast conversational replies.
+- Avoid unnecessary details unless user explicitly asks.
+- politely decline if user ask something not related to event.
 """
 
 from typing import List

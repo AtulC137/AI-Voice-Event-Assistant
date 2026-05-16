@@ -2,133 +2,415 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-
-    <title>
-        AI Voice Assistant
-    </title>
+<meta charset="UTF-8">
+<title>AI Voice Assistant</title>
 </head>
 
 <body>
 
-    <h1>
-        AI Voice Assistant
-    </h1>
+<h1>AI Voice Assistant</h1>
 
-    <button id="connectBtn">
-        Connect WebSocket
-    </button>
+<button id="startBtn">
+Start Conversation
+</button>
 
-    <button id="startBtn">
-        Start Recording
-    </button>
+<script>
 
-    <button id="stopBtn">
-        Stop Recording
-    </button>
+let websocket=null;
+let mediaRecorder=null;
+let audioChunks=[];
+let currentAudio=null;
+let voiceDetectionInterval=null;
+let isRecording=false;
+let sharedStream=null;
+let conversationEnded=false;
 
-    <script>
 
-        let websocket = null;
+/**
+* Initialize microphone once
+*/
+async function initializeMicrophone()
+{
+    if(sharedStream)
+    {
+        return;
+    }
 
-        let mediaRecorder = null;
+    sharedStream=
+    await navigator.mediaDevices
+    .getUserMedia({
+        audio:true
+    });
 
-        let audioChunks = [];
+    console.log(
+        "Microphone initialized"
+    );
+}
 
-        document
-            .getElementById("connectBtn")
-            .onclick = () => {
 
-                websocket = new WebSocket(
-                    "ws://localhost:8000/ws/conversation"
-                );
 
-                websocket.binaryType = "arraybuffer";
+/**
+* Start recording
+*/
+async function startRecording()
+{
+    if(
+        isRecording ||
+        conversationEnded
+    )
+    {
+        return;
+    }
 
-                websocket.onopen = () => {
-                    console.log("WebSocket Connected");
-                };
+    isRecording=true;
 
-                websocket.onmessage = async (event) => {
+    mediaRecorder=
+    new MediaRecorder(
+        sharedStream
+    );
 
+    audioChunks=[];
+
+    mediaRecorder.ondataavailable=
+    (event)=>{
+
+        audioChunks.push(
+            event.data
+        );
+
+    };
+
+    mediaRecorder.start();
+
+    console.log(
+        "Recording Started"
+    );
+
+
+    const audioContext=
+    new AudioContext();
+
+    const source=
+    audioContext
+    .createMediaStreamSource(
+        sharedStream
+    );
+
+    const analyser=
+    audioContext
+    .createAnalyser();
+
+    source.connect(
+        analyser
+    );
+
+    analyser.fftSize=512;
+
+    const dataArray=
+    new Uint8Array(
+        analyser.frequencyBinCount
+    );
+
+    let silenceStart=
+    Date.now();
+
+    const silenceCheck=
+    setInterval(()=>{
+
+        analyser.getByteFrequencyData(
+            dataArray
+        );
+
+        const volume=
+        dataArray.reduce(
+            (a,b)=>a+b
+        )/
+        dataArray.length;
+
+
+        if(volume>15)
+        {
+            silenceStart=
+            Date.now();
+        }
+
+
+        if(
+            Date.now()
+            -
+            silenceStart
+            >
+            1500
+        )
+        {
+            clearInterval(
+                silenceCheck
+            );
+
+            mediaRecorder.stop();
+        }
+
+    },100);
+
+
+    mediaRecorder.onstop=
+    ()=>{
+
+        isRecording=false;
+
+        if(
+            conversationEnded
+        )
+        {
+            return;
+        }
+
+        const audioBlob=
+        new Blob(
+            audioChunks,
+            {
+                type:"audio/wav"
+            }
+        );
+
+        console.log(
+            "Sending Audio Blob"
+        );
+
+        websocket.send(
+            audioBlob
+        );
+
+    };
+
+}
+
+
+
+/**
+* Detect interruption
+*/
+async function startVoiceDetection()
+{
+    clearInterval(
+        voiceDetectionInterval
+    );
+
+    const audioContext=
+    new AudioContext();
+
+    const source=
+    audioContext
+    .createMediaStreamSource(
+        sharedStream
+    );
+
+    const analyser=
+    audioContext
+    .createAnalyser();
+
+    source.connect(
+        analyser
+    );
+
+    analyser.fftSize=512;
+
+    const dataArray=
+    new Uint8Array(
+        analyser.frequencyBinCount
+    );
+
+    voiceDetectionInterval=
+    setInterval(()=>{
+
+        analyser.getByteFrequencyData(
+            dataArray
+        );
+
+        const volume=
+        dataArray.reduce(
+            (a,b)=>a+b
+        )/
+        dataArray.length;
+
+
+        if(
+            volume>25 &&
+            currentAudio &&
+            !conversationEnded
+        )
+        {
+            console.log(
+                "Voice interruption detected"
+            );
+
+            currentAudio.pause();
+
+            currentAudio.currentTime=0;
+
+            currentAudio=null;
+
+            clearInterval(
+                voiceDetectionInterval
+            );
+
+            setTimeout(
+            ()=>{
+                startRecording();
+            },
+            300
+            );
+        }
+
+    },100);
+
+}
+
+
+
+/**
+* Auto websocket
+*/
+window.onload=
+async()=>{
+
+    websocket=
+    new WebSocket(
+        "ws://localhost:8000/ws/conversation"
+    );
+
+    websocket.binaryType=
+    "arraybuffer";
+
+
+    websocket.onopen=
+    async()=>{
+
+        console.log(
+            "WebSocket Connected"
+        );
+
+        await initializeMicrophone();
+
+    };
+
+
+    websocket.onmessage=
+    async(event)=>{
+
+
+        if(
+            typeof event.data==="string"
+        )
+        {
+            if(
+                event.data===
+                "__END_AFTER_AUDIO__"
+            )
+            {
                 console.log(
-                    "Received AI Audio Response"
+                    "Conversation ending"
                 );
 
-                const audioBlob = new Blob(
-                    [event.data],
-                    {
-                        type: "audio/wav"
-                    }
+                conversationEnded=true;
+
+                clearInterval(
+                    voiceDetectionInterval
                 );
 
-                const audioUrl =
-                    URL.createObjectURL(audioBlob);
+                currentAudio.onended=
+                ()=>{
 
-                const audio =
-                    new Audio(audioUrl);
-
-                audio.play();
-            };
-
-                websocket.onclose = () => {
-                    console.log("WebSocket Closed");
-                };
-            };
-
-        document
-            .getElementById("startBtn")
-            .onclick = async () => {
-
-                const stream =
-                    await navigator.mediaDevices.getUserMedia(
-                        {
-                            audio: true
-                        }
-                    );
-
-                mediaRecorder =
-                    new MediaRecorder(stream);
-
-                audioChunks = [];
-
-                mediaRecorder.ondataavailable = (event) => {
-
-                    audioChunks.push(event.data);
-                };
-
-                mediaRecorder.start();
-
-                console.log("Recording Started");
-            };
-
-        document
-            .getElementById("stopBtn")
-            .onclick = async () => {
-
-                mediaRecorder.stop();
-
-                mediaRecorder.onstop = async () => {
-
-                    const audioBlob = new Blob(
-                        audioChunks,
-                        {
-                            type: "audio/wav"
-                        }
-                    );
+                    websocket.close();
 
                     console.log(
-                        "Sending Audio Blob"
+                        "Conversation closed"
                     );
 
-                    websocket.send(audioBlob);
                 };
 
-                console.log("Recording Stopped");
-            };
+                return;
+            }
+        }
 
-    </script>
+
+
+        console.log(
+            "Received AI Audio"
+        );
+
+
+        const audioBlob=
+        new Blob(
+            [event.data],
+            {
+                type:"audio/wav"
+            }
+        );
+
+        const audioUrl=
+        URL.createObjectURL(
+            audioBlob
+        );
+
+        currentAudio=
+        new Audio(
+            audioUrl
+        );
+
+        currentAudio.play()
+        .catch(
+            error=>console.log(
+                error
+            )
+        );
+
+        startVoiceDetection();
+
+    };
+
+
+    websocket.onclose=
+    ()=>{
+
+        console.log(
+            "WebSocket Closed"
+        );
+
+    };
+
+};
+
+
+
+document
+.getElementById(
+"startBtn"
+)
+onclick=
+async()=>{
+
+    conversationEnded=false;
+
+    const speech=
+    new SpeechSynthesisUtterance(
+    "Hello, I am your AI event assistant. How can I help you today?"
+    );
+
+    speech.onend=
+    ()=>{
+
+        startRecording();
+
+    };
+
+    speechSynthesis.speak(
+        speech
+    );
+
+};
+
+</script>
 
 </body>
-
 </html>

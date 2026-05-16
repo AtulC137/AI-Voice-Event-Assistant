@@ -84,13 +84,14 @@ class ConversationOrchestrator:
             role="user",
             content=user_message
         )
-        self.persistence_service.store_message(
-            conversation_id=conversation_id,
-            sender="assistant",
-            message_text=assistant_response
-        )
+        
 
         if "</think>" in assistant_response:
+            self.persistence_service.store_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                message_text=assistant_response
+            )
 
             assistant_response = (
                 assistant_response
@@ -107,6 +108,14 @@ class ConversationOrchestrator:
         detected_intent = IntentDetector.detect_intent(
             user_message=user_message
         )
+        
+        if detected_intent == "End Conversation":
+            assistant_response = (
+                "Thank you for your time. "
+                "It was nice talking with you. "
+                "Have a great day."
+            )
+
         if detected_intent:
             self.persistence_service.update_intent(
                 conversation_id=conversation_id,
@@ -130,5 +139,8 @@ class ConversationOrchestrator:
         return {
             "assistant_response": assistant_response,
             "intent": detected_intent,
-            "audio_file": output_audio_file
+            "audio_file": output_audio_file,
+            "end_conversation":
+                detected_intent ==
+                "End Conversation"
         }
