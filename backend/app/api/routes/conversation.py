@@ -1,12 +1,5 @@
 """
 WebSocket conversation routes.
-
-Handles:
-- realtime voice conversations
-- audio reception
-- STT processing
-- conversation orchestration
-- TTS response generation
 """
 
 import uuid
@@ -36,7 +29,6 @@ from app.repositories.conversation_repository import (
 
 router = APIRouter()
 
-
 stt_service = SarvamSTTService()
 
 
@@ -44,9 +36,6 @@ stt_service = SarvamSTTService()
 async def conversation_websocket(
     websocket: WebSocket
 ):
-    """
-    Main realtime conversation websocket endpoint.
-    """
 
     await websocket.accept()
 
@@ -58,7 +47,9 @@ async def conversation_websocket(
     db = SessionLocal()
 
     persistence_service = (
-        PersistenceService(db=db)
+        PersistenceService(
+            db=db
+        )
     )
 
     conversation = (
@@ -69,11 +60,16 @@ async def conversation_websocket(
         )
     )
 
-    conversation_id = str(conversation.id)
+    conversation_id = (
+        str(
+            conversation.id
+        )
+    )
 
     conversation_orchestrator = (
         ConversationOrchestrator(
-            persistence_service=persistence_service
+            persistence_service=
+            persistence_service
         )
     )
 
@@ -81,48 +77,106 @@ async def conversation_websocket(
 
         while True:
 
-            audio_bytes = (
-                await websocket.receive_bytes()
+            audio_buffer = bytearray()
+
+            while True:
+
+                message = (
+                    await websocket.receive()
+                )
+
+                if (
+                    "text" in message
+                    and
+                    message["text"]
+                    ==
+                    "__END_AUDIO__"
+                ):
+                    break
+
+
+                if (
+                    "bytes" in message
+                    and
+                    message["bytes"]
+                ):
+
+                    chunk = (
+                        message["bytes"]
+                    )
+
+                    audio_buffer.extend(
+                        chunk
+                    )
+
+                    try:
+
+                        await (
+                            stt_service
+                            .stream_transcript_preview(
+                                chunk
+                            )
+                        )
+
+                    except:
+
+                        pass
+
+
+            if not audio_buffer:
+
+                continue
+
+
+            audio_bytes = bytes(
+                audio_buffer
             )
+
 
             input_audio_path = (
                 f"storage/input_audio/"
                 f"{uuid.uuid4()}.wav"
             )
 
+
             with open(
                 input_audio_path,
                 "wb"
             ) as audio_file:
 
-                audio_file.write(audio_bytes)
+                audio_file.write(
+                    audio_bytes
+                )
 
-            print(
-                f"Saved Input Audio: "
-                f"{input_audio_path}",
-                flush=True
-            )
 
             stt_response = (
-                await stt_service.transcribe_audio(
-                    file_path=input_audio_path
+                await stt_service
+                .transcribe_audio(
+                    file_path=
+                    input_audio_path
                 )
             )
+
+
             user_text = (
-                stt_response["transcript"]
+                stt_response[
+                    "transcript"
+                ]
             )
 
-            if not user_text.strip():
-                print(
-                    "Empty transcription ignored.",
-                    flush=True
-                )
 
+            if (
+                not user_text.strip()
+            ):
                 continue
 
+
             language_code = (
-                stt_response["language_code"]
+                stt_response[
+                    "language_code"
+                ]
             )
+
 
             print(
                 f"Transcribed Text: "
@@ -130,21 +184,27 @@ async def conversation_websocket(
                 flush=True
             )
 
+
             orchestrator_response = (
-                await conversation_orchestrator
+                await
+                conversation_orchestrator
                 .process_user_message(
-                    conversation_id=conversation_id,
-                    user_message=user_text,
-                    language_code=language_code
+                    conversation_id=
+                    conversation_id,
+
+                    user_message=
+                    user_text,
+
+                    language_code=
+                    language_code
                 )
             )
 
-            response_audio_path = (
-                orchestrator_response["audio_file"]
-            )
 
             with open(
-                response_audio_path,
+                orchestrator_response[
+                    "audio_file"
+                ],
                 "rb"
             ) as audio_file:
 
@@ -152,19 +212,24 @@ async def conversation_websocket(
                     audio_file.read()
                 )
 
+
             await websocket.send_bytes(
                 response_audio_bytes
             )
+
+
             if (
                 orchestrator_response[
                     "end_conversation"
                 ]
             ):
+
                 await websocket.send_text(
                     "__END_AFTER_AUDIO__"
                 )
 
                 break
+
 
             print(
                 "AI response audio sent.",
@@ -174,17 +239,12 @@ async def conversation_websocket(
     except WebSocketDisconnect:
 
         print(
-            "WebSocket client disconnected.",
-            flush=True
-        )
-
-    except Exception as error:
-
-        print(
-            f"WebSocket Error: {error}",
+            "WebSocket disconnected.",
             flush=True
         )
 
     finally:
+
+        await stt_service.close_stream()
 
         db.close()

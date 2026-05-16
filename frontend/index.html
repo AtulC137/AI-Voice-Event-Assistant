@@ -37,8 +37,7 @@ async function initializeMicrophone()
     }
 
     sharedStream=
-    await navigator.mediaDevices
-    .getUserMedia({
+    await navigator.mediaDevices.getUserMedia({
         audio:true
     });
 
@@ -46,7 +45,6 @@ async function initializeMicrophone()
         "Microphone initialized"
     );
 }
-
 
 
 /**
@@ -74,13 +72,24 @@ async function startRecording()
     mediaRecorder.ondataavailable=
     (event)=>{
 
-        audioChunks.push(
+    if(
+        websocket &&
+        websocket.readyState===1
+    )
+    {
+        websocket.send(
             event.data
         );
+    }
+
+    console.log(
+        "Audio chunk sent:",
+        event.data.size
+    );
 
     };
 
-    mediaRecorder.start();
+    mediaRecorder.start(500);
 
     console.log(
         "Recording Started"
@@ -158,6 +167,10 @@ async function startRecording()
 
         isRecording=false;
 
+        console.log(
+            "Recording Stopped"
+        );
+
         if(
             conversationEnded
         )
@@ -165,20 +178,12 @@ async function startRecording()
             return;
         }
 
-        const audioBlob=
-        new Blob(
-            audioChunks,
-            {
-                type:"audio/wav"
-            }
+        websocket.send(
+            "__END_AUDIO__"
         );
 
         console.log(
-            "Sending Audio Blob"
-        );
-
-        websocket.send(
-            audioBlob
+            "Audio stream completed"
         );
 
     };
@@ -298,7 +303,6 @@ async()=>{
     websocket.onmessage=
     async(event)=>{
 
-
         if(
             typeof event.data==="string"
         )
@@ -308,24 +312,12 @@ async()=>{
                 "__END_AFTER_AUDIO__"
             )
             {
-                console.log(
-                    "Conversation ending"
-                );
-
                 conversationEnded=true;
-
-                clearInterval(
-                    voiceDetectionInterval
-                );
 
                 currentAudio.onended=
                 ()=>{
 
                     websocket.close();
-
-                    console.log(
-                        "Conversation closed"
-                    );
 
                 };
 
@@ -334,11 +326,9 @@ async()=>{
         }
 
 
-
         console.log(
             "Received AI Audio"
         );
-
 
         const audioBlob=
         new Blob(
@@ -358,12 +348,7 @@ async()=>{
             audioUrl
         );
 
-        currentAudio.play()
-        .catch(
-            error=>console.log(
-                error
-            )
-        );
+        currentAudio.play();
 
         startVoiceDetection();
 
@@ -382,12 +367,11 @@ async()=>{
 };
 
 
-
 document
 .getElementById(
 "startBtn"
 )
-onclick=
+.onclick=
 async()=>{
 
     conversationEnded=false;
