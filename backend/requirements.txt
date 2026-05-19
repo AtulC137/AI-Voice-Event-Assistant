@@ -10,3 +10,5 @@ pydantic-settings
 
 websockets
 httpx
+
+scikit-learn==1.5.2

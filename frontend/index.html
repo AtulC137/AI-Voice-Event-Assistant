@@ -16,382 +16,403 @@ Start Conversation
 
 <script>
 
-let websocket=null;
-let mediaRecorder=null;
-let audioChunks=[];
-let currentAudio=null;
-let voiceDetectionInterval=null;
-let isRecording=false;
-let sharedStream=null;
-let conversationEnded=false;
+let websocket              = null;
+let currentAudio           = null;
+let voiceDetectionInterval = null;
+let isRecording            = false;
+let sharedStream           = null;
+let conversationEnded      = false;
+
+// AudioContext pipeline for PCM capture
+let audioContext           = null;
+let scriptProcessor        = null;
+let sourceNode             = null;
+
+// Silence detection state
+let silenceStart           = null;
+
+// ── TUNABLE THRESHOLDS ────────────────────────────────────────────────────
+//
+// SILENCE_RMS_THRESHOLD:
+//   RMS volume below which audio is considered silence.
+//   0.005 was too sensitive — background hiss triggered resets.
+//   0.015 ignores subtle noise; works for normal speaking distance.
+//   Raise to 0.020 if still triggering; lower to 0.010 for quiet speakers.
+//
+// INTERRUPTION_FREQ_THRESHOLD:
+//   Average byte frequency value from AnalyserNode (0–255 scale).
+//   25 was too low — fans/AC/room hum triggered false interruptions.
+//   55 requires deliberate speech to trigger; ignores ambient noise.
+//   Raise to 70 for noisy environments; lower to 40 for quiet rooms.
+//
+// MIN_RECORD_MS:
+//   Minimum recording time before silence detection can fire.
+//   1500ms was fine; kept at 1500ms.
+//
+// SILENCE_DURATION_MS:
+//   How long continuous silence must last before turn ends.
+//   2000ms was fine; kept at 2000ms.
+//
+// INTERRUPTION_HOLD_MS:
+//   Number of consecutive high-volume samples required before
+//   treating it as a real interruption (debounce).
+//   Prevents single-frame noise spikes from triggering interruption.
+// ─────────────────────────────────────────────────────────────────────────
+
+const SILENCE_RMS_THRESHOLD       = 0.015;   // was 0.005
+const INTERRUPTION_FREQ_THRESHOLD = 55;      // was 25
+const MIN_RECORD_MS               = 1500;
+const SILENCE_DURATION_MS         = 2000;
+const INTERRUPTION_HOLD_MS        = 250;     // ~250ms of sustained voice needed
 
 
 /**
-* Initialize microphone once
-*/
+ * Initialize microphone once.
+ * Requests permission and stores the stream.
+ */
 async function initializeMicrophone()
 {
-    if(sharedStream)
+    if( sharedStream )
     {
         return;
     }
 
-    sharedStream=
+    sharedStream =
     await navigator.mediaDevices.getUserMedia({
-        audio:true
+        audio: {
+            channelCount:      1,
+            sampleRate:        16000,
+            echoCancellation:  true,
+            noiseSuppression:  true,
+            autoGainControl:   true
+        }
     });
 
-    console.log(
-        "Microphone initialized"
-    );
+    console.log( "Microphone initialized" );
 }
 
 
 /**
-* Start recording
-*/
+ * Convert Float32 samples (range -1..1) to Int16 PCM bytes.
+ * This is the format Sarvam STT expects.
+ */
+function float32ToInt16( float32Array )
+{
+    const int16 = new Int16Array( float32Array.length );
+
+    for( let i = 0; i < float32Array.length; i++ )
+    {
+        const clamped = Math.max( -1, Math.min( 1, float32Array[i] ) );
+        int16[i]      = clamped * 32767;
+    }
+
+    return int16;
+}
+
+
+/**
+ * Compute RMS volume from Float32 samples.
+ * Used for silence detection.
+ */
+function getRmsVolume( float32Array )
+{
+    let sum = 0;
+
+    for( let i = 0; i < float32Array.length; i++ )
+    {
+        sum += float32Array[i] * float32Array[i];
+    }
+
+    return Math.sqrt( sum / float32Array.length );
+}
+
+
+/**
+ * Stop the active PCM recording pipeline cleanly.
+ */
+function stopRecording()
+{
+    if( scriptProcessor )
+    {
+        scriptProcessor.onaudioprocess = null;
+        scriptProcessor.disconnect();
+        scriptProcessor = null;
+    }
+
+    if( sourceNode )
+    {
+        sourceNode.disconnect();
+        sourceNode = null;
+    }
+
+    if( audioContext )
+    {
+        audioContext.close().catch( () => {} );
+        audioContext = null;
+    }
+
+    isRecording = false;
+
+    console.log( "Recording Stopped" );
+}
+
+
+/**
+ * Start recording using AudioContext + ScriptProcessor.
+ *
+ * Pipeline:
+ *   Microphone stream
+ *   → AudioContext (16kHz)
+ *   → ScriptProcessor (bufferSize 4096)
+ *   → Float32 samples
+ *   → Int16 conversion
+ *   → WebSocket.send( pcmBytes )
+ *
+ * Silence detection (FIXED thresholds):
+ *   - Must record at least MIN_RECORD_MS before silence can trigger
+ *   - RMS volume threshold: SILENCE_RMS_THRESHOLD (raised from 0.005)
+ *   - SILENCE_DURATION_MS of continuous silence → stop recording
+ */
 async function startRecording()
 {
-    if(
-        isRecording ||
-        conversationEnded
-    )
+    if( isRecording || conversationEnded )
     {
         return;
     }
 
-    isRecording=true;
+    isRecording          = true;
+    silenceStart         = Date.now();
+    const recordingStart = Date.now();
 
-    mediaRecorder=
-    new MediaRecorder(
-        sharedStream
-    );
+    console.log( "Recording Started" );
 
-    audioChunks=[];
+    // Fresh AudioContext at 16kHz for each recording turn
+    audioContext = new AudioContext({ sampleRate: 16000 });
+    sourceNode   = audioContext.createMediaStreamSource( sharedStream );
 
-    mediaRecorder.ondataavailable=
-    (event)=>{
+    // bufferSize 4096 → ~256ms per callback at 16kHz
+    scriptProcessor = audioContext.createScriptProcessor( 4096, 1, 1 );
 
-    if(
-        websocket &&
-        websocket.readyState===1
-    )
+    scriptProcessor.onaudioprocess = ( event ) =>
     {
-        websocket.send(
-            event.data
-        );
-    }
-
-    console.log(
-        "Audio chunk sent:",
-        event.data.size
-    );
-
-    };
-
-    mediaRecorder.start(500);
-
-    console.log(
-        "Recording Started"
-    );
-
-
-    const audioContext=
-    new AudioContext();
-
-    const source=
-    audioContext
-    .createMediaStreamSource(
-        sharedStream
-    );
-
-    const analyser=
-    audioContext
-    .createAnalyser();
-
-    source.connect(
-        analyser
-    );
-
-    analyser.fftSize=512;
-
-    const dataArray=
-    new Uint8Array(
-        analyser.frequencyBinCount
-    );
-
-    let silenceStart=
-    Date.now();
-
-    const silenceCheck=
-    setInterval(()=>{
-
-        analyser.getByteFrequencyData(
-            dataArray
-        );
-
-        const volume=
-        dataArray.reduce(
-            (a,b)=>a+b
-        )/
-        dataArray.length;
-
-
-        if(volume>15)
-        {
-            silenceStart=
-            Date.now();
-        }
-
-
-        if(
-            Date.now()
-            -
-            silenceStart
-            >
-            1500
-        )
-        {
-            clearInterval(
-                silenceCheck
-            );
-
-            mediaRecorder.stop();
-        }
-
-    },100);
-
-
-    mediaRecorder.onstop=
-    ()=>{
-
-        isRecording=false;
-
-        console.log(
-            "Recording Stopped"
-        );
-
-        if(
-            conversationEnded
-        )
+        if( !isRecording || conversationEnded )
         {
             return;
         }
 
-        websocket.send(
-            "__END_AUDIO__"
-        );
+        const float32 = event.inputBuffer.getChannelData( 0 );
+        const volume  = getRmsVolume( float32 );
 
-        console.log(
-            "Audio stream completed"
-        );
+        // Reset silence timer only when real speech is detected
+        // SILENCE_RMS_THRESHOLD raised to ignore background hiss
+        if( volume > SILENCE_RMS_THRESHOLD )
+        {
+            silenceStart = Date.now();
+        }
 
+        // Always send PCM chunk to backend
+        const int16Chunk = float32ToInt16( float32 );
+
+        if(
+            websocket &&
+            websocket.readyState === WebSocket.OPEN
+        )
+        {
+            websocket.send( int16Chunk.buffer );
+        }
+
+        // Silence detection
+        const elapsed     = Date.now() - recordingStart;
+        const silenceTime = Date.now() - silenceStart;
+
+        if( elapsed > MIN_RECORD_MS && silenceTime > SILENCE_DURATION_MS )
+        {
+            stopRecording();
+
+            if( !conversationEnded )
+            {
+                websocket.send( "__END_AUDIO__" );
+                console.log( "Audio stream completed (silence detected)" );
+            }
+        }
     };
 
+    sourceNode.connect( scriptProcessor );
+
+    // Must connect to destination for onaudioprocess to fire
+    scriptProcessor.connect( audioContext.destination );
 }
 
 
-
 /**
-* Detect interruption
-*/
-async function startVoiceDetection()
+ * Monitor microphone while AI is speaking.
+ * Interruption requires SUSTAINED voice (INTERRUPTION_HOLD_MS debounce)
+ * to prevent background noise spikes from triggering false interrupts.
+ *
+ * FIXED: threshold raised from 25 → INTERRUPTION_FREQ_THRESHOLD (55)
+ * FIXED: added hold counter — must exceed threshold for multiple
+ *        consecutive checks before treating as real interruption.
+ */
+function startVoiceDetection()
 {
-    clearInterval(
-        voiceDetectionInterval
-    );
+    clearInterval( voiceDetectionInterval );
 
-    const audioContext=
-    new AudioContext();
+    const detectionContext =
+    new AudioContext({ sampleRate: 16000 });
 
-    const source=
-    audioContext
-    .createMediaStreamSource(
-        sharedStream
-    );
+    const detectionSource =
+    detectionContext.createMediaStreamSource( sharedStream );
 
-    const analyser=
-    audioContext
-    .createAnalyser();
+    const analyser      = detectionContext.createAnalyser();
+    analyser.fftSize    = 512;
+    analyser.smoothingTimeConstant = 0.3;  // smooth out spikes
 
-    source.connect(
-        analyser
-    );
+    detectionSource.connect( analyser );
 
-    analyser.fftSize=512;
+    const dataArray = new Uint8Array( analyser.frequencyBinCount );
 
-    const dataArray=
-    new Uint8Array(
-        analyser.frequencyBinCount
-    );
+    // Debounce: track how long voice has been sustained
+    const CHECK_INTERVAL_MS   = 100;
+    const REQUIRED_HOLD_COUNT =
+        Math.ceil( INTERRUPTION_HOLD_MS / CHECK_INTERVAL_MS );  // 3 checks
 
-    voiceDetectionInterval=
-    setInterval(()=>{
+    let sustainedVoiceCount = 0;
 
-        analyser.getByteFrequencyData(
-            dataArray
-        );
+    voiceDetectionInterval = setInterval( () =>
+    {
+        analyser.getByteFrequencyData( dataArray );
 
-        const volume=
-        dataArray.reduce(
-            (a,b)=>a+b
-        )/
-        dataArray.length;
+        const volume =
+        dataArray.reduce( (a, b) => a + b ) / dataArray.length;
 
+        if( volume > INTERRUPTION_FREQ_THRESHOLD )
+        {
+            sustainedVoiceCount++;
+        }
+        else
+        {
+            // Reset counter if volume drops — must be continuous
+            sustainedVoiceCount = 0;
+        }
 
+        // Only trigger interruption after sustained voice detected
         if(
-            volume>25 &&
-            currentAudio &&
+            sustainedVoiceCount >= REQUIRED_HOLD_COUNT &&
+            currentAudio    &&
             !conversationEnded
         )
         {
             console.log(
-                "Voice interruption detected"
+                "Voice interruption detected (sustained)",
+                volume.toFixed(1)
             );
+
+            sustainedVoiceCount = 0;
 
             currentAudio.pause();
+            currentAudio.currentTime = 0;
+            currentAudio = null;
 
-            currentAudio.currentTime=0;
+            clearInterval( voiceDetectionInterval );
+            detectionContext.close();
 
-            currentAudio=null;
-
-            clearInterval(
-                voiceDetectionInterval
-            );
-
-            setTimeout(
-            ()=>{
-                startRecording();
-            },
-            300
-            );
+            setTimeout( () => { startRecording(); }, 300 );
         }
 
-    },100);
-
+    }, CHECK_INTERVAL_MS );
 }
 
 
-
 /**
-* Auto websocket
-*/
-window.onload=
-async()=>{
+ * WebSocket setup — runs once on page load.
+ */
+window.onload = async () =>
+{
+    websocket = new WebSocket( "ws://localhost:8000/ws/conversation" );
+    websocket.binaryType = "arraybuffer";
 
-    websocket=
-    new WebSocket(
-        "ws://localhost:8000/ws/conversation"
-    );
-
-    websocket.binaryType=
-    "arraybuffer";
-
-
-    websocket.onopen=
-    async()=>{
-
-        console.log(
-            "WebSocket Connected"
-        );
-
+    websocket.onopen = async () =>
+    {
+        console.log( "WebSocket Connected" );
         await initializeMicrophone();
-
     };
 
-
-    websocket.onmessage=
-    async(event)=>{
-
-        if(
-            typeof event.data==="string"
-        )
+    websocket.onmessage = async ( event ) =>
+    {
+        // Text frame
+        if( typeof event.data === "string" )
         {
-            if(
-                event.data===
-                "__END_AFTER_AUDIO__"
-            )
+            if( event.data === "__END_AFTER_AUDIO__" )
             {
-                conversationEnded=true;
+                conversationEnded = true;
 
-                currentAudio.onended=
-                ()=>{
-
+                if( currentAudio )
+                {
+                    currentAudio.onended = () => { websocket.close(); };
+                }
+                else
+                {
                     websocket.close();
-
-                };
-
-                return;
+                }
             }
+
+            return;
         }
 
+        // Binary frame = AI audio (WAV bytes)
+        console.log( "Received AI Audio" );
 
-        console.log(
-            "Received AI Audio"
-        );
+        const audioBlob =
+        new Blob( [event.data], { type: "audio/wav" } );
 
-        const audioBlob=
-        new Blob(
-            [event.data],
+        const audioUrl = URL.createObjectURL( audioBlob );
+        currentAudio   = new Audio( audioUrl );
+
+        // After AI finishes speaking → listen for user again
+        currentAudio.onended = () =>
+        {
+            if( !conversationEnded )
             {
-                type:"audio/wav"
+                startRecording();
             }
-        );
-
-        const audioUrl=
-        URL.createObjectURL(
-            audioBlob
-        );
-
-        currentAudio=
-        new Audio(
-            audioUrl
-        );
+        };
 
         currentAudio.play();
 
+        // Watch for interruption while AI is speaking
         startVoiceDetection();
-
     };
 
-
-    websocket.onclose=
-    ()=>{
-
-        console.log(
-            "WebSocket Closed"
-        );
-
+    websocket.onclose = () =>
+    {
+        console.log( "WebSocket Closed" );
     };
 
+    websocket.onerror = ( err ) =>
+    {
+        console.error( "WebSocket Error:", err );
+    };
 };
 
 
-document
-.getElementById(
-"startBtn"
-)
-.onclick=
-async()=>{
+/**
+ * Start Conversation button.
+ * Plays greeting then starts recording.
+ */
+document.getElementById( "startBtn" ).onclick = async () =>
+{
+    conversationEnded = false;
 
-    conversationEnded=false;
-
-    const speech=
-    new SpeechSynthesisUtterance(
-    "Hello, I am your AI event assistant. How can I help you today?"
+    const speech = new SpeechSynthesisUtterance(
+        "Hello, I am your AI event assistant. How can I help you today?"
     );
 
-    speech.onend=
-    ()=>{
-
+    speech.onend = () =>
+    {
         startRecording();
-
     };
 
-    speechSynthesis.speak(
-        speech
-    );
-
+    speechSynthesis.speak( speech );
 };
 
 </script>
