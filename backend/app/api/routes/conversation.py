@@ -4,247 +4,136 @@ WebSocket conversation routes.
 
 import uuid
 
-from fastapi import APIRouter
-from fastapi import WebSocket
-from fastapi import WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.db.session import SessionLocal
-
-from app.services.sarvam.stt_service import (
-    SarvamSTTService
-)
-
-from app.services.conversation.orchestrator import (
-    ConversationOrchestrator
-)
-
-from app.services.conversation.persistence_service import (
-    PersistenceService
-)
-
-from app.repositories.conversation_repository import (
-    ConversationRepository
-)
+from app.services.sarvam.stt_service import SarvamSTTService
+from app.services.conversation.orchestrator import ConversationOrchestrator
+from app.services.conversation.intent_detector import IntentDetector
+from app.services.conversation.persistence_service import PersistenceService
+from app.repositories.conversation_repository import ConversationRepository
 
 
 router = APIRouter()
-
 stt_service = SarvamSTTService()
+
+MSG_START = "__START_CONVERSATION__"
+MSG_END_AUDIO = "__END_AUDIO__"
+MSG_INTERRUPT = "__INTERRUPT__"
+MSG_READY = "__READY__"
+MSG_END_AFTER_AUDIO = "__END_AFTER_AUDIO__"
+
+
+async def _send_audio_file(websocket: WebSocket, file_path: str) -> None:
+    with open(file_path, "rb") as audio_file:
+        await websocket.send_bytes(audio_file.read())
 
 
 @router.websocket("/ws/conversation")
-async def conversation_websocket(
-    websocket: WebSocket
-):
-
+async def conversation_websocket(websocket: WebSocket):
     await websocket.accept()
-
-    print(
-        "WebSocket client connected.",
-        flush=True
-    )
+    print("WebSocket client connected.", flush=True)
 
     db = SessionLocal()
-
-    persistence_service = (
-        PersistenceService(
-            db=db
-        )
+    persistence_service = PersistenceService(db=db)
+    conversation = ConversationRepository.create_conversation(
+        db=db,
+        user_id=None,
     )
-
-    conversation = (
-        ConversationRepository
-        .create_conversation(
-            db=db,
-            user_id=None
-        )
+    conversation_id = str(conversation.id)
+    orchestrator = ConversationOrchestrator(
+        persistence_service=persistence_service
     )
-
-    conversation_id = (
-        str(
-            conversation.id
-        )
-    )
-
-    conversation_orchestrator = (
-        ConversationOrchestrator(
-            persistence_service=
-            persistence_service
-        )
-    )
+    conversation_started = False
+    last_language_code = "en-IN"
 
     try:
-
         while True:
-
             audio_buffer = bytearray()
+            collecting_audio = False
 
             while True:
+                message = await websocket.receive()
 
-                message = (
-                    await websocket.receive()
-                )
+                if message.get("type") == "websocket.disconnect":
+                    raise WebSocketDisconnect()
 
-                if (
-                    "text" in message
-                    and
-                    message["text"]
-                    ==
-                    "__END_AUDIO__"
-                ):
-                    break
-
-
-                if (
-                    "bytes" in message
-                    and
-                    message["bytes"]
-                ):
-
-                    chunk = (
-                        message["bytes"]
-                    )
-
-                    audio_buffer.extend(
-                        chunk
-                    )
-
-                    try:
-
-                        await (
-                            stt_service
-                            .stream_transcript_preview(
-                                chunk
-                            )
+                text = message.get("text")
+                if text:
+                    if text == MSG_START and not conversation_started:
+                        conversation_started = True
+                        welcome = await orchestrator.generate_welcome_audio(
+                            conversation_id=conversation_id,
+                            language_code=last_language_code,
                         )
+                        await _send_audio_file(
+                            websocket,
+                            welcome["audio_file"],
+                        )
+                        await websocket.send_text(MSG_READY)
+                        break
 
-                    except:
+                    if text == MSG_INTERRUPT:
+                        audio_buffer.clear()
+                        collecting_audio = False
+                        continue
 
-                        pass
+                    if text == MSG_END_AUDIO:
+                        break
 
+                    continue
 
-            if not audio_buffer:
+                chunk = message.get("bytes")
+                if chunk:
+                    collecting_audio = True
+                    audio_buffer.extend(chunk)
 
+            if not conversation_started or not audio_buffer:
                 continue
-
-
-            audio_bytes = bytes(
-                audio_buffer
-            )
-
 
             input_audio_path = (
-                f"storage/input_audio/"
-                f"{uuid.uuid4()}.wav"
+                f"storage/input_audio/{uuid.uuid4()}.webm"
             )
+            with open(input_audio_path, "wb") as audio_file:
+                audio_file.write(bytes(audio_buffer))
 
-
-            with open(
-                input_audio_path,
-                "wb"
-            ) as audio_file:
-
-                audio_file.write(
-                    audio_bytes
-                )
-
-
-            stt_response = (
-                await stt_service
-                .transcribe_audio(
-                    file_path=
-                    input_audio_path
-                )
+            stt_response = await stt_service.transcribe_audio(
+                file_path=input_audio_path
             )
+            user_text = stt_response.get("transcript", "").strip()
 
-
-            user_text = (
-                stt_response[
-                    "transcript"
-                ]
-            )
-
-
-            if (
-                not user_text.strip()
-            ):
+            if not user_text:
+                await websocket.send_text(MSG_READY)
                 continue
 
+            language_code = stt_response.get(
+                "language_code", "en-IN"
+            )
+            last_language_code = language_code
 
-            language_code = (
-                stt_response[
-                    "language_code"
-                ]
+            print(f"Transcribed Text: {user_text}", flush=True)
+
+            intent_preview = IntentDetector.detect_intent(user_text)
+            if intent_preview:
+                print(f"Detected Intent: {intent_preview}", flush=True)
+
+            result = await orchestrator.process_user_message(
+                conversation_id=conversation_id,
+                user_message=user_text,
+                language_code=language_code,
             )
 
+            await _send_audio_file(websocket, result["audio_file"])
 
-            print(
-                f"Transcribed Text: "
-                f"{user_text}",
-                flush=True
-            )
-
-
-            orchestrator_response = (
-                await
-                conversation_orchestrator
-                .process_user_message(
-                    conversation_id=
-                    conversation_id,
-
-                    user_message=
-                    user_text,
-
-                    language_code=
-                    language_code
-                )
-            )
-
-
-            with open(
-                orchestrator_response[
-                    "audio_file"
-                ],
-                "rb"
-            ) as audio_file:
-
-                response_audio_bytes = (
-                    audio_file.read()
-                )
-
-
-            await websocket.send_bytes(
-                response_audio_bytes
-            )
-
-
-            if (
-                orchestrator_response[
-                    "end_conversation"
-                ]
-            ):
-
-                await websocket.send_text(
-                    "__END_AFTER_AUDIO__"
-                )
-
+            if result["end_conversation"]:
+                print("End conversation — closing WebSocket.", flush=True)
+                await websocket.send_text(MSG_END_AFTER_AUDIO)
                 break
 
-
-            print(
-                "AI response audio sent.",
-                flush=True
-            )
+            await websocket.send_text(MSG_READY)
+            print("AI response audio sent.", flush=True)
 
     except WebSocketDisconnect:
-
-        print(
-            "WebSocket disconnected.",
-            flush=True
-        )
-
+        print("WebSocket disconnected.", flush=True)
     finally:
-
-        await stt_service.close_stream()
-
         db.close()
