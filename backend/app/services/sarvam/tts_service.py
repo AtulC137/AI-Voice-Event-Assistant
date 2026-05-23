@@ -1,27 +1,37 @@
 """
 SARVAM Text-to-Speech service.
+Optimized version:
+- No disk writes
+- Returns audio bytes directly
 """
 
 import base64
-import uuid
 
 from app.services.conversation.conversation_messages import (
     normalize_language_code,
 )
-from app.services.sarvam.client import SarvamAPIClient
+
+from app.services.sarvam.client import (
+    SarvamAPIClient
+)
 
 
 class SarvamTTSService:
+
     def __init__(self):
         self.client = SarvamAPIClient()
 
-    async def generate_speech(
+    async def generate_speech_bytes(
         self,
         text: str,
         language_code: str = "en-IN",
-        output_file: str | None = None,
-    ) -> str:
-        target_language = normalize_language_code(language_code)
+    ) -> bytes:
+
+        target_language = (
+            normalize_language_code(
+                language_code
+            )
+        )
 
         payload = {
             "inputs": [text],
@@ -40,27 +50,14 @@ class SarvamTTSService:
             json=payload,
         )
 
-        audio_base64 = response.json()["audios"][0]
-        audio_bytes = base64.b64decode(audio_base64)
-
-        if not output_file:
-            output_file = (
-                f"storage/output_audio/response_{uuid.uuid4()}.wav"
-            )
-
-        with open(output_file, "wb") as audio_file:
-            audio_file.write(audio_bytes)
-
-        return output_file
-
-    async def generate_speech_bytes(
-        self,
-        text: str,
-        language_code: str = "en-IN",
-    ) -> bytes:
-        path = await self.generate_speech(
-            text=text,
-            language_code=language_code,
+        audio_base64 = (
+            response.json()["audios"][0]
         )
-        with open(path, "rb") as audio_file:
-            return audio_file.read()
+
+        audio_bytes = (
+            base64.b64decode(
+                audio_base64
+            )
+        )
+
+        return audio_bytes
