@@ -10,3 +10,9 @@ pydantic-settings
 
 websockets
 httpx
+
+silero-vad
+torch
+torchaudio
+numpy
+onnxruntime

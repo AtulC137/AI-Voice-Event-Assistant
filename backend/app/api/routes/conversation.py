@@ -34,10 +34,18 @@ from app.repositories.conversation_repository import (
     ConversationRepository
 )
 
+from app.services.vad.silero_vad_service import (
+    SileroVADService
+)
+
 
 router = APIRouter()
 
 stt_service = SarvamSTTService()
+
+vad_service = (
+    SileroVADService()
+)
 
 MSG_START="__START_CONVERSATION__"
 MSG_END_AUDIO="__END_AUDIO__"
@@ -158,8 +166,21 @@ async def conversation_websocket(
                 )
 
                 if chunk:
+
                     audio_buffer.extend(
                         chunk
+                    )
+
+                    speech_detected=(
+                        vad_service
+                        .detect_speech(
+                            chunk
+                        )
+                    )
+
+                    print(
+                        f"Speech detected: {speech_detected}",
+                        flush=True
                     )
 
 
